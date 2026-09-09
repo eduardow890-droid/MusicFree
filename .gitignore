@@ -1,0 +1,41 @@
+# Dependências
+node_modules/
+
+# Ambiente local
+.env
+.env.*
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
+
+# IDE/editor
+.vscode/
+.idea/
+
+# Build e cache
+.cache/
+coverage/
+.dist/
+
+dist/
+build/
+
+# Uploads locais e arquivos temporários
+uploads/
+*.tmp
+*.temp
+
+# Arquivos de mídia locais (se futuramente houver pasta local para armazenamento)
+*.mp3
+*.wav
+*.flac
+
+# GitHub / workspace extras
+*.swp
+*.swo
