@@ -1,32 +1,16 @@
 
-    lucide.createIcons();
-
-    // --- Acesso simples por senha (o app é público, mas de uso restrito) ---
-    function getStoredUser() {
-      return localStorage.getItem('app_user') || 'usuario1';
+    function renderIcons() {
+      if (window.lucide) window.lucide.createIcons();
     }
 
-    function getStoredPassword() {
-      return localStorage.getItem('app_password') || '';
-    }
+    renderIcons();
 
     async function authFetch(url, options = {}) {
-      const headers = {
-        ...(options.headers || {}),
-        'x-app-user': getStoredUser(),
-        'x-app-password': getStoredPassword()
-      };
-      const response = await fetch(url, { ...options, headers });
+      const response = await fetch(url, { ...options, credentials: 'same-origin' });
 
       if (response.status === 401) {
-        const usuario = prompt('Usuário (usuario1 ou usuario2):', getStoredUser()) || getStoredUser();
-        const senha = prompt(`Senha do usuário ${usuario}:`);
-        if (usuario && senha) {
-          localStorage.setItem('app_user', usuario);
-          localStorage.setItem('app_password', senha);
-          return authFetch(url, options);
-        }
-        throw new Error('Acesso não autorizado.');
+        window.location.assign('/login.html');
+        throw new Error('Sessão expirada.');
       }
 
       return response;
@@ -43,8 +27,17 @@
     const playBtn = document.getElementById('play-btn');
     const nextBtn = document.getElementById('next-btn');
     const previousBtn = document.getElementById('previous-btn');
+    const progressContainer = document.getElementById('progress-container');
+    const progressBar = document.getElementById('progress-bar');
+    const currentTimeEl = document.getElementById('current-time');
+    const totalDurationEl = document.getElementById('total-duration');
+    const volumeContainer = document.getElementById('volume-container');
+    const volumeBar = document.getElementById('volume-bar');
+    const muteBtn = document.getElementById('mute-btn');
     const libraryList = document.getElementById('library-list');
     const refreshLibraryBtn = document.getElementById('refresh-library');
+    const logoutButton = document.getElementById('logout-btn');
+    const profileName = document.getElementById('profile-name');
     const navItems = document.querySelectorAll('.nav-item');
     const views = {
       upload: document.getElementById('view-upload'),
@@ -53,8 +46,16 @@
 
     const appState = {
       tracks: [],
-      currentIndex: -1
+      currentIndex: -1,
+      currentUser: null
     };
+
+    async function loadSession() {
+      const response = await authFetch('/api/session');
+      const session = await response.json();
+      appState.currentUser = session.usuario;
+      profileName.textContent = session.usuario;
+    }
 
     function setView(viewName) {
       Object.entries(views).forEach(([key, section]) => {
@@ -74,7 +75,8 @@
         genre: track.genero || track.genre || 'Gênero não informado',
         audio_url: track.url_audio || track.audio_url,
         duration: track.duracao_segundos ?? track.duration ?? null,
-        cover_url: track.capa_url || track.cover_url || null
+        cover_url: track.capa_url || track.cover_url || null,
+        owner: track.usuario || track.owner || null
       };
     }
 
@@ -92,6 +94,9 @@
         playerCover.innerHTML = '';
         playerCover.style.background = '';
         audioElement.removeAttribute('src');
+        progressBar.style.width = '0%';
+        currentTimeEl.textContent = '0:00';
+        totalDurationEl.textContent = '0:00';
         return;
       }
 
@@ -114,7 +119,7 @@
     function updatePlayButton(isPlaying) {
       const icon = playBtn.querySelector('i');
       icon.setAttribute('data-lucide', isPlaying ? 'pause' : 'play');
-      lucide.createIcons();
+      renderIcons();
       renderLibrary();
     }
 
@@ -208,23 +213,25 @@
           }
         });
 
-        const deleteButton = document.createElement('button');
-        deleteButton.type = 'button';
-        deleteButton.className = 'delete-btn';
-        deleteButton.setAttribute('aria-label', 'Excluir música');
-        deleteButton.innerHTML = '<i data-lucide="trash-2"></i>';
-        deleteButton.addEventListener('click', async (e) => {
-          e.stopPropagation();
-          if (!confirm(`Excluir "${track.title}"? Essa ação não pode ser desfeita.`)) return;
-          await deleteTrack(track.id);
-        });
-
-        actions.append(playButton, deleteButton);
+        actions.append(playButton);
+        if (track.owner === appState.currentUser) {
+          const deleteButton = document.createElement('button');
+          deleteButton.type = 'button';
+          deleteButton.className = 'delete-btn';
+          deleteButton.setAttribute('aria-label', 'Excluir música');
+          deleteButton.innerHTML = '<i data-lucide="trash-2"></i>';
+          deleteButton.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            if (!confirm(`Excluir "${track.title}"? Essa ação não pode ser desfeita.`)) return;
+            await deleteTrack(track.id);
+          });
+          actions.append(deleteButton);
+        }
         item.append(number, cover, info, genreBadge, duration, actions);
         libraryList.appendChild(item);
       });
 
-      lucide.createIcons();
+      renderIcons();
     }
 
     async function deleteTrack(id) {
@@ -251,6 +258,7 @@
     }
 
     async function loadLibrary() {
+      showLibrarySkeleton();
       try {
         const response = await authFetch('/musicas');
         const data = await response.json();
@@ -263,18 +271,38 @@
       }
     }
 
+    function showLibrarySkeleton() {
+      libraryList.innerHTML = Array.from({ length: 5 }, () => `
+        <div class="library-row skeleton-row" aria-hidden="true">
+          <div class="skeleton-box" style="width: 24px; height: 16px;"></div>
+          <div class="skeleton-box" style="width: 44px; height: 44px; border-radius: 6px;"></div>
+          <div class="skeleton-copy">
+            <div class="skeleton-box" style="width: 40%; height: 14px;"></div>
+            <div class="skeleton-box" style="width: 25%; height: 10px;"></div>
+          </div>
+        </div>
+      `).join('');
+    }
+
     fileInput.addEventListener('change', (e) => {
-      if (e.target.files.length > 0) {
-        fileNameDisplay.textContent = `Arquivo selecionado: ${e.target.files[0].name}`;
+      const files = Array.from(e.target.files).filter((file) => file.type === 'audio/mpeg' || file.name.toLowerCase().endsWith('.mp3'));
+      if (files.length > 0) {
+        fileNameDisplay.textContent = files.length === 1
+          ? `Arquivo selecionado: ${files[0].name}`
+          : `${files.length} músicas selecionadas`;
       } else {
-        fileNameDisplay.textContent = 'Arraste seu arquivo MP3 aqui';
+        fileNameDisplay.textContent = 'Selecione uma pasta com suas músicas';
       }
     });
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
+      const selectedFiles = Array.from(fileInput.files);
+      if (!selectedFiles.length) return;
       submitBtn.disabled = true;
-      submitBtn.textContent = 'Enviando para o Supabase...';
+      submitBtn.textContent = selectedFiles.length > 1
+        ? `Enviando ${selectedFiles.length} músicas...`
+        : 'Enviando para o Supabase...';
 
       const formData = new FormData(form);
 
@@ -287,15 +315,13 @@
         const result = await response.json();
 
         if (response.ok) {
-          const musica = result.musica || result.song;
-          const track = normalizeTrack(musica);
-
-          appState.tracks.unshift(track);
+          const tracks = (result.musicas || [result.musica || result.song]).filter(Boolean).map(normalizeTrack);
+          appState.tracks.unshift(...tracks);
           renderLibrary();
-          updatePlayer(track);
+          updatePlayer(tracks[0]);
           form.reset();
-          fileNameDisplay.textContent = 'Arraste seu arquivo MP3 aqui';
-          alert('🎵 Música enviada e cadastrada com sucesso!');
+          fileNameDisplay.textContent = 'Selecione uma pasta com suas músicas';
+          alert(`🎵 ${tracks.length} música(s) enviada(s) e cadastrada(s) com sucesso!`);
         } else {
           alert(`Erro: ${result.error || 'Não foi possível fazer o upload.'}`);
         }
@@ -315,6 +341,61 @@
     });
 
     refreshLibraryBtn.addEventListener('click', loadLibrary);
+
+    function setProgressFromPointer(clientX) {
+      const rect = progressContainer.getBoundingClientRect();
+      const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      if (Number.isFinite(audioElement.duration)) {
+        audioElement.currentTime = ratio * audioElement.duration;
+      }
+    }
+
+    function setVolumeFromPointer(clientX) {
+      const rect = volumeContainer.getBoundingClientRect();
+      const volume = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      audioElement.volume = volume;
+      audioElement.muted = volume === 0;
+      volumeBar.style.width = `${volume * 100}%`;
+      volumeContainer.setAttribute('aria-valuenow', String(Math.round(volume * 100)));
+      updateMuteIcon();
+    }
+
+    function updateMuteIcon() {
+      muteBtn.querySelector('i').setAttribute('data-lucide', audioElement.muted || audioElement.volume === 0 ? 'volume-x' : 'volume-2');
+      muteBtn.setAttribute('aria-label', audioElement.muted || audioElement.volume === 0 ? 'Ativar som' : 'Silenciar');
+      renderIcons();
+    }
+
+    progressContainer.addEventListener('click', (event) => setProgressFromPointer(event.clientX));
+    progressContainer.addEventListener('keydown', (event) => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      if (!Number.isFinite(audioElement.duration)) return;
+      if (event.key === 'Home') audioElement.currentTime = 0;
+      else if (event.key === 'End') audioElement.currentTime = audioElement.duration;
+      else audioElement.currentTime = Math.max(0, Math.min(audioElement.duration, audioElement.currentTime + (event.key === 'ArrowRight' ? 5 : -5)));
+    });
+
+    volumeContainer.addEventListener('click', (event) => setVolumeFromPointer(event.clientX));
+
+    let lastVolume = 0.8;
+    muteBtn.addEventListener('click', () => {
+      if (audioElement.muted || audioElement.volume === 0) {
+        audioElement.muted = false;
+        audioElement.volume = lastVolume || 0.8;
+      } else {
+        lastVolume = audioElement.volume;
+        audioElement.muted = true;
+      }
+      volumeBar.style.width = `${audioElement.muted ? 0 : audioElement.volume * 100}%`;
+      volumeContainer.setAttribute('aria-valuenow', String(Math.round(audioElement.muted ? 0 : audioElement.volume * 100)));
+      updateMuteIcon();
+    });
+
+    logoutButton.addEventListener('click', async () => {
+      await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' });
+      window.location.assign('/login.html');
+    });
 
     playBtn.addEventListener('click', () => {
       if (!audioElement.src) {
@@ -345,6 +426,17 @@
       }
     });
 
+    audioElement.addEventListener('loadedmetadata', () => {
+      totalDurationEl.textContent = formatDuration(audioElement.duration);
+    });
+    audioElement.addEventListener('timeupdate', () => {
+      if (!Number.isFinite(audioElement.duration)) return;
+      const percent = (audioElement.currentTime / audioElement.duration) * 100;
+      progressBar.style.width = `${percent}%`;
+      currentTimeEl.textContent = formatDuration(audioElement.currentTime);
+      totalDurationEl.textContent = formatDuration(audioElement.duration);
+      progressContainer.setAttribute('aria-valuenow', String(Math.round(percent)));
+    });
     audioElement.addEventListener('play', () => updatePlayButton(true));
     audioElement.addEventListener('pause', () => updatePlayButton(false));
     audioElement.addEventListener('ended', () => {
@@ -354,5 +446,8 @@
     });
 
     setView('upload');
-    loadLibrary();
+    loadSession().then(loadLibrary).catch(() => {});
+    audioElement.volume = 0.8;
+    volumeBar.style.width = '80%';
+    updateMuteIcon();
     updatePlayButton(false);

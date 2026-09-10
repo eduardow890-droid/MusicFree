@@ -7,7 +7,9 @@ A estrutura atual mantém o projeto leve: um backend em Node.js + Express, um fr
 
 ## Objetivo do modelo atual
 - permitir o uso de duas pessoas com autenticação simples
-- separar as músicas por usuário
+- manter uma biblioteca musical compartilhada entre os usuários
+- registrar o autor de cada upload
+- permitir que somente o autor exclua a própria música
 - manter baixa complexidade para manutenção futura
 
 ## Fluxo de autenticação
@@ -32,9 +34,10 @@ Se `APP_PASSWORD` estiver configurado, ele pode funcionar como senha global de e
 
 ## Regras de negócio
 - cada música deve ficar vinculada ao usuário que a enviou
-- a listagem de músicas deve devolver somente as do usuário autenticado
-- um usuário não deve conseguir ver ou excluir músicas do outro usuário
-- a biblioteca é compartilhada apenas em nível de sistema local e restrita por usuário
+- a listagem de músicas deve devolver as músicas dos dois usuários
+- um usuário pode ouvir as músicas enviadas pelo outro usuário
+- um usuário não deve conseguir excluir a música do outro usuário
+- cada usuário poderá montar suas próprias playlists a partir da biblioteca compartilhada
 
 ## Estrutura de dados esperada
 A tabela `musicas` no Supabase deve incluir, no mínimo:
@@ -66,7 +69,7 @@ A tabela `musicas` no Supabase deve incluir, no mínimo:
 - confirmar usuários no backend
 - confirmar que o frontend envia `x-app-user`
 - confirmar que o backend filtra por `usuario`
-- validar que exclusão também respeita o usuário da música
+- validar que exclusão continua respeitando o usuário autor da música
 
 ## Observação
 Este modelo é simples e funcional para duas pessoas, sem introduzir infraestrutura pesada. Ele foi desenhado para facilitar futuras evoluções sem reescrever tudo do zero.
