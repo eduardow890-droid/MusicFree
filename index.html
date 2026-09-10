@@ -32,9 +32,9 @@
     <main class="main-content">
       <header class="top-bar">
         <div class="user-profile">
-          <button class="profile-btn">
+          <button id="logout-btn" class="profile-btn" type="button">
             <i data-lucide="user"></i>
-            <span>Artista / Produtor</span>
+            <span id="profile-name">Artista / Produtor</span>
           </button>
         </div>
       </header>
@@ -46,12 +46,12 @@
 
           <form id="upload-form" class="upload-form">
             <div class="file-dropzone">
-              <input type="file" id="audio-file" name="audio" accept=".mp3,audio/mpeg" required>
+              <input type="file" id="audio-file" name="audio" accept=".mp3,audio/mpeg" webkitdirectory directory multiple required>
               <label for="audio-file" class="dropzone-label">
                 <i data-lucide="upload-cloud" class="upload-icon"></i>
-                <span class="primary-text" id="file-name-display">Arraste seu arquivo MP3 aqui</span>
-                <span class="secondary-text">ou clique para navegar no seu computador</span>
-                <span class="file-limit">Apenas arquivos .MP3 (Máx. 15MB)</span>
+                <span class="primary-text" id="file-name-display">Selecione uma pasta com suas músicas</span>
+                <span class="secondary-text">ou escolha vários arquivos MP3</span>
+                <span class="file-limit">Até 100 arquivos .MP3 (Máx. 15MB cada)</span>
               </label>
             </div>
 
@@ -119,12 +119,25 @@
           <i data-lucide="skip-forward"></i>
         </button>
       </div>
+      <div class="playback-bar">
+        <span id="current-time" class="time-display">0:00</span>
+        <div class="progress-bar-container" id="progress-container" role="slider" aria-label="Progresso da música" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" tabindex="0">
+          <div class="progress-bar" id="progress-bar">
+            <div class="progress-handle"></div>
+          </div>
+        </div>
+        <span id="total-duration" class="time-display">0:00</span>
+      </div>
     </div>
 
     <div class="volume-controls">
-      <i data-lucide="volume-2"></i>
-      <div class="volume-bar">
-        <div class="volume-progress"></div>
+      <button id="mute-btn" type="button" class="volume-btn" aria-label="Silenciar">
+        <i data-lucide="volume-2"></i>
+      </button>
+      <div class="volume-bar-container" id="volume-container" role="slider" aria-label="Volume" aria-valuemin="0" aria-valuemax="100" aria-valuenow="80" tabindex="0">
+        <div class="volume-progress" id="volume-bar">
+          <div class="volume-handle"></div>
+        </div>
       </div>
     </div>
   </footer>

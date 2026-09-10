@@ -9,33 +9,50 @@ const clientCode = fs.readFileSync(path.join(__dirname, '../index.js'), 'utf8');
 test('o contrato do upload usa a mesma chave no backend e no frontend', () => {
   assert.match(
     serverCode,
-    /musica:\s*musicaRetornada|mensagem:\s*'Música cadastrada com sucesso!'/,
-    'O backend deve devolver o payload da música em uma chave consistente'
+    /upload\.array\('audio',\s*100\)|musicas\.push\(await processarUpload/,
+    'O backend deve aceitar e processar múltiplos arquivos'
   );
 
   assert.match(
     clientCode,
-    /const\s+musica\s*=\s*result\.musica\s*\|\|\s*result\.song|result\.musica/,
-    'O frontend deve ler a resposta usando result.musica'
+    /result\.musicas|fileInput\.files/,
+    'O frontend deve ler a resposta em lote'
   );
 });
 
-test('o sistema aceita dois usuários com autenticação simples e separação por usuário', () => {
+test('o sistema usa login por sessão e separação por usuário', () => {
   assert.match(
     serverCode,
-    /USER_1_NAME|USER_2_NAME|USER_1_PASSWORD|USER_2_PASSWORD|x-app-user/,
-    'O backend deve reconhecer dois usuários e ler o header x-app-user'
+    /api\/login|USER_1_NAME|USER_2_NAME|USER_1_PASSWORD|USER_2_PASSWORD/,
+    'O backend deve expor login e reconhecer os usuários configurados'
   );
 
   assert.match(
     clientCode,
-    /x-app-user|getStoredUser\(|localStorage\.getItem\('app_user'\)|localStorage\.setItem\('app_user'/,
-    'O frontend deve armazenar e enviar o usuário atual'
+    /credentials:\s*'same-origin'|api\/session/,
+    'O frontend deve usar a sessão do navegador'
   );
 
   assert.match(
     serverCode,
     /eq\('usuario'|usuario:\s*usuarioAtual|usuario\s*\)/,
     'O backend deve filtrar a biblioteca por usuário'
+  );
+});
+
+test('a página de login envia as credenciais e permite encerrar a sessão', () => {
+  const loginCode = fs.readFileSync(path.join(__dirname, '../login.js'), 'utf8');
+  const loginPage = fs.readFileSync(path.join(__dirname, '../login.html'), 'utf8');
+
+  assert.match(loginPage, /id="login-form"/);
+  assert.match(loginCode, /api\/login/);
+  assert.match(serverCode, /api\/logout|HttpOnly/);
+});
+
+test('o backend funciona mesmo quando a coluna usuario ainda não existe no schema do Supabase', () => {
+  assert.match(
+    serverCode,
+    /hasUsuarioColumn|usuarioColumnDisponivel|column.*usuario|schema cache/i,
+    'O backend deve verificar se a coluna usuario existe antes de filtrar por ela'
   );
 });

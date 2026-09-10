@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Entrar | Music Studio</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="login-page">
+  <main class="login-shell">
+    <section class="login-intro" aria-label="Music Studio">
+      <div class="login-brand">
+        <span class="brand-mark">M</span>
+        <span>Music Studio</span>
+      </div>
+      <div class="login-intro-copy">
+        <p class="eyebrow">Seu espaço de criação</p>
+        <h1>Suas faixas.<br><em>Seu ritmo.</em></h1>
+        <p>Organize, ouça e acompanhe sua biblioteca musical em um só lugar.</p>
+      </div>
+      <div class="login-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    </section>
+
+    <section class="login-panel">
+      <div class="login-card">
+        <p class="eyebrow">Bem-vindo de volta</p>
+        <h2>Entrar na conta</h2>
+        <p class="login-subtitle">Acesse sua biblioteca para continuar.</p>
+
+        <form id="login-form" class="login-form">
+          <div class="form-group">
+            <label for="username">Usuário</label>
+            <div class="input-with-icon">
+              <span aria-hidden="true">@</span>
+              <input id="username" name="usuario" type="text" autocomplete="username" placeholder="Digite seu usuário" required autofocus>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="password">Senha</label>
+            <div class="input-with-icon">
+              <span aria-hidden="true">*</span>
+              <input id="password" name="senha" type="password" autocomplete="current-password" placeholder="Digite sua senha" required>
+              <button id="toggle-password" class="password-toggle" type="button" aria-label="Mostrar senha">Mostrar</button>
+            </div>
+          </div>
+
+          <p id="login-error" class="form-error" role="alert" hidden></p>
+          <button id="login-submit" class="login-submit" type="submit">Entrar <span aria-hidden="true">&rarr;</span></button>
+        </form>
+
+        <p class="login-note">Acesso privado para artistas e produtores.</p>
+      </div>
+    </section>
+  </main>
+  <script src="login.js"></script>
+</body>
+</html>

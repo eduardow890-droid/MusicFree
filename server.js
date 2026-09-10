@@ -1,4 +1,5 @@
 require('dotenv').config();
+const crypto = require('node:crypto');
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
@@ -6,6 +7,35 @@ const mm = require('music-metadata');
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
+const SESSION_COOKIE = 'music_session';
+const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+const sessions = new Map();
+
+function lerCookie(req, nome) {
+  const cookies = req.get('cookie') || '';
+  const cookie = cookies.split(';').find((item) => item.trim().startsWith(`${nome}=`));
+  return cookie ? decodeURIComponent(cookie.trim().slice(nome.length + 1)) : null;
+}
+
+function obterSessao(req) {
+  const token = lerCookie(req, SESSION_COOKIE);
+  const sessao = token ? sessions.get(token) : null;
+
+  if (!sessao) return null;
+  if (sessao.expiresAt <= Date.now()) {
+    sessions.delete(token);
+    return null;
+  }
+
+  return { token, ...sessao };
+}
+
+function definirCookieSessao(res, token, maxAge = SESSION_TTL_MS) {
+  res.setHeader(
+    'Set-Cookie',
+    `${SESSION_COOKIE}=${encodeURIComponent(token)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${Math.floor(maxAge / 1000)}`
+  );
+}
 
 function normalizarValor(valor, fallback = '') {
   if (Array.isArray(valor)) {
@@ -35,6 +65,7 @@ async function lerMetadadosMp3(file) {
       picture: picture ? { data: picture.data, format: picture.format } : null
     };
   } catch (error) {
+    console.warn(`Não foi possível ler os metadados de ${file.originalname}: ${error.message}`);
     return {
       title: file.originalname.replace(/\.[^/.]+$/, '') || 'Música sem título',
       artist: 'Artista desconhecido',
@@ -50,6 +81,15 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+app.get('/', (req, res) => {
+  res.redirect(obterSessao(req) ? '/index.html' : '/login.html');
+});
+
+app.get('/index.html', (req, res) => {
+  if (!obterSessao(req)) return res.redirect('/login.html');
+  return res.sendFile(`${__dirname}/index.html`);
+});
+
 // Serve os arquivos da pasta atual (index.html, style.css, etc.)
 app.use(express.static(__dirname));
 
@@ -61,7 +101,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Configuração do Multer (grava na memória antes de enviar ao Supabase)
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 15 * 1024 * 1024 }, // Limite de 15MB
+  limits: { fileSize: 15 * 1024 * 1024, files: 100 }, // Até 100 arquivos de 15MB
   fileFilter: (req, file, cb) => {
     if (file.mimetype === 'audio/mpeg' || file.mimetype === 'audio/mp3') {
       cb(null, true);
@@ -73,39 +113,78 @@ const upload = multer({
 
 // Suporte mínimo para 2 usuários com credenciais simples
 const USER_CONFIG = {
-  usuario1: { name: process.env.USER_1_NAME || 'usuario1', password: process.env.USER_1_PASSWORD || 'usuario1' },
-  usuario2: { name: process.env.USER_2_NAME || 'usuario2', password: process.env.USER_2_PASSWORD || 'usuario2' }
+  [process.env.USER_1_NAME || 'usuario1']: { password: process.env.USER_1_PASSWORD || 'usuario1' },
+  [process.env.USER_2_NAME || 'usuario2']: { password: process.env.USER_2_PASSWORD || 'usuario2' }
 };
 
 const APP_PASSWORD = process.env.APP_PASSWORD;
 
 function getUsuarioAtual(req) {
-  const usuario = req.get('x-app-user') || req.query.usuario || 'usuario1';
-  return Object.prototype.hasOwnProperty.call(USER_CONFIG, usuario) ? usuario : 'usuario1';
+  return req.user;
 }
 
-function checkPassword(req, res, next) {
-  const usuario = getUsuarioAtual(req);
-  const provided = req.get('x-app-password') || req.query.senha || req.query.password;
+function checkSession(req, res, next) {
+  const sessao = obterSessao(req);
+  if (!sessao) return res.status(401).json({ error: 'Sessão expirada ou usuário não autenticado.' });
 
-  if (APP_PASSWORD && provided === APP_PASSWORD) return next();
+  req.user = sessao.user;
+  req.sessionToken = sessao.token;
+  return next();
+}
 
+app.post('/api/login', (req, res) => {
+  const usuario = typeof req.body.usuario === 'string' ? req.body.usuario.trim() : '';
+  const senha = typeof req.body.senha === 'string' ? req.body.senha : '';
   const usuarioValido = USER_CONFIG[usuario];
-  if (usuarioValido && provided === usuarioValido.password) return next();
+  const senhaValida = usuarioValido && usuarioValido.password === senha;
+  const senhaGlobalValida = APP_PASSWORD && APP_PASSWORD === senha;
 
-  return res.status(401).json({ error: 'Usuário ou senha inválidos.' });
+  if (!usuarioValido || (!senhaValida && !senhaGlobalValida)) {
+    return res.status(401).json({ error: 'Usuário ou senha inválidos.' });
+  }
+
+  const token = crypto.randomBytes(32).toString('hex');
+  sessions.set(token, { user: usuario, expiresAt: Date.now() + SESSION_TTL_MS });
+  definirCookieSessao(res, token);
+
+  return res.json({ usuario });
+});
+
+app.get('/api/session', checkSession, (req, res) => {
+  return res.json({ autenticado: true, usuario: req.user });
+});
+
+app.post('/api/logout', (req, res) => {
+  const token = lerCookie(req, SESSION_COOKIE);
+  if (token) sessions.delete(token);
+  definirCookieSessao(res, '', 0);
+  return res.status(204).end();
+});
+
+async function usuarioColumnDisponivel() {
+  if (globalThis.__musicasUsuarioColumnStatus !== undefined) {
+    return globalThis.__musicasUsuarioColumnStatus;
+  }
+
+  try {
+    const { error } = await supabase.from('musicas').select('usuario').limit(1);
+    const ok = !(error && /Could not find the 'usuario' column|column .*usuario/i.test(error.message || String(error)));
+    globalThis.__musicasUsuarioColumnStatus = ok;
+    return ok;
+  } catch (error) {
+    const ok = !/Could not find the 'usuario' column|column .*usuario/i.test(String(error.message || error));
+    globalThis.__musicasUsuarioColumnStatus = ok;
+    return ok;
+  }
 }
 
-app.use(checkPassword);
+app.use(checkSession);
 
 app.get('/musicas', async (req, res) => {
   try {
-    const usuario = getUsuarioAtual(req);
-    const { data, error } = await supabase
-      .from('musicas')
-      .select('*')
-      .eq('usuario', usuario)
-      .order('id', { ascending: false });
+    const query = supabase.from('musicas').select('*');
+
+    const { data, error } = await query.order('id', { ascending: false });
 
     if (error) throw error;
 
@@ -120,13 +199,18 @@ app.delete('/musicas/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const usuario = getUsuarioAtual(req);
+    const usaUsuario = await usuarioColumnDisponivel();
 
-    const { data: musica, error: fetchError } = await supabase
+    let query = supabase
       .from('musicas')
-      .select('url_audio, capa_url, usuario')
-      .eq('id', id)
-      .eq('usuario', usuario)
-      .single();
+      .select('url_audio, capa_url' + (usaUsuario ? ', usuario' : ''))
+      .eq('id', id);
+
+    if (usaUsuario) {
+      query = query.eq('usuario', usuario);
+    }
+
+    const { data: musica, error: fetchError } = await query.single();
 
     if (fetchError) throw fetchError;
     if (!musica) return res.status(404).json({ error: 'Música não encontrada.' });
@@ -159,97 +243,91 @@ app.delete('/musicas/:id', async (req, res) => {
   }
 });
 
-// Rota de Upload
-app.post('/upload', upload.single('audio'), async (req, res) => {
-  try {
-    const { title, artist, genre } = req.body;
-    const file = req.file;
+async function processarUpload(file, req, overrides = {}) {
+  const metadados = await lerMetadadosMp3(file);
+  const nomeArquivo = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}-${file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+  const arquivosEnviados = [nomeArquivo];
 
-    if (!file) {
+  const { error: storageError } = await supabase.storage
+    .from('musicas')
+    .upload(nomeArquivo, file.buffer, { contentType: file.mimetype });
+
+  if (storageError) throw storageError;
+
+  const { data: publicUrlData } = supabase.storage.from('musicas').getPublicUrl(nomeArquivo);
+  const urlAudio = publicUrlData.publicUrl;
+  let urlCapa = null;
+
+  if (metadados.picture) {
+    const extensao = (metadados.picture.format || 'image/jpeg').split('/').pop();
+    const nomeCapa = `capas/${Date.now()}-${crypto.randomBytes(6).toString('hex')}-cover.${extensao}`;
+    const { error: capaError } = await supabase.storage.from('musicas').upload(nomeCapa, metadados.picture.data, {
+      contentType: metadados.picture.format || 'image/jpeg'
+    });
+
+    if (capaError) {
+      throw new Error(`A capa de ${file.originalname} não pôde ser enviada: ${capaError.message}`);
+    }
+
+    arquivosEnviados.push(nomeCapa);
+    urlCapa = supabase.storage.from('musicas').getPublicUrl(nomeCapa).data.publicUrl;
+  }
+
+  const usuario = getUsuarioAtual(req);
+  const usaUsuario = await usuarioColumnDisponivel();
+  const tituloFinal = overrides.title || metadados.title;
+  const artistaFinal = overrides.artist || metadados.artist;
+  const generoFinal = overrides.genre || metadados.genre;
+  const payload = {
+    titulo: tituloFinal,
+    artista: artistaFinal,
+    genero: generoFinal,
+    url_audio: urlAudio,
+    duracao_segundos: metadados.duration,
+    capa_url: urlCapa
+  };
+
+  if (usaUsuario) payload.usuario = usuario;
+
+  const { data: dbData, error: dbError } = await supabase.from('musicas').insert([payload]).select();
+  if (dbError) {
+    await supabase.storage.from('musicas').remove(arquivosEnviados).catch(() => {});
+    throw dbError;
+  }
+
+  const registro = dbData[0] || {};
+  return {
+    id: registro.id ?? null,
+    usuario: registro.usuario ?? usuario,
+    title: registro.titulo ?? tituloFinal,
+    artist: registro.artista ?? artistaFinal,
+    genre: registro.genero ?? generoFinal,
+    audio_url: registro.url_audio ?? urlAudio,
+    duration: registro.duracao_segundos ?? metadados.duration,
+    cover_url: registro.capa_url ?? urlCapa
+  };
+}
+
+// Rota de Upload: aceita um arquivo ou uma pasta com até 100 MP3s.
+app.post('/upload', upload.array('audio', 100), async (req, res) => {
+  try {
+    if (!req.files?.length) {
       return res.status(400).json({ error: 'Nenhum arquivo de áudio foi enviado.' });
     }
 
-    const metadados = await lerMetadadosMp3(file);
-    const tituloFinal = title || metadados.title;
-    const artistaFinal = artist || metadados.artist;
-    const generoFinal = genre || metadados.genre;
-
-    // Nome único para o arquivo MP3
-    const nomeArquivo = `${Date.now()}-${file.originalname.replace(/\s+/g, '_')}`;
-
-    // 1. Envia o arquivo MP3 para o bucket 'musicas'
-    const { error: storageError } = await supabase.storage
-      .from('musicas')
-      .upload(nomeArquivo, file.buffer, {
-        contentType: file.mimetype
-      });
-
-    if (storageError) throw storageError;
-
-    // 2. Pega a URL pública do arquivo MP3
-    const { data: publicUrlData } = supabase.storage
-      .from('musicas')
-      .getPublicUrl(nomeArquivo);
-
-    const urlAudio = publicUrlData.publicUrl;
-
-    // 2.1 Se o MP3 tem capa embutida (ID3), envia ela também para o storage
-    let urlCapa = null;
-    if (metadados.picture) {
-      const extensao = (metadados.picture.format || 'image/jpeg').split('/').pop();
-      const nomeCapa = `capas/${Date.now()}-cover.${extensao}`;
-
-      const { error: capaError } = await supabase.storage
-        .from('musicas')
-        .upload(nomeCapa, metadados.picture.data, {
-          contentType: metadados.picture.format || 'image/jpeg'
-        });
-
-      if (!capaError) {
-        const { data: capaUrlData } = supabase.storage.from('musicas').getPublicUrl(nomeCapa);
-        urlCapa = capaUrlData.publicUrl;
-      }
+    const musicas = [];
+    const overrides = req.files.length === 1
+      ? { title: req.body.title, artist: req.body.artist, genre: req.body.genre }
+      : {};
+    for (const file of req.files) {
+      musicas.push(await processarUpload(file, req, overrides));
     }
-
-    // 3. Salva os metadados na tabela 'musicas'
-    const usuario = getUsuarioAtual(req);
-
-    const { data: dbData, error: dbError } = await supabase
-      .from('musicas')
-      .insert([
-        {
-          titulo: tituloFinal,
-          artista: artistaFinal,
-          genero: generoFinal,
-          url_audio: urlAudio,
-          duracao_segundos: metadados.duration,
-          capa_url: urlCapa,
-          usuario
-        }
-      ])
-      .select();
-
-    if (dbError) {
-      // Reverte o upload do storage para não deixar arquivo órfão
-      await supabase.storage.from('musicas').remove([nomeArquivo]).catch(() => {});
-      throw dbError;
-    }
-
-    const musicaRetornada = {
-      id: dbData[0]?.id ?? null,
-      title: dbData[0]?.titulo ?? tituloFinal,
-      artist: dbData[0]?.artista ?? artistaFinal,
-      genre: dbData[0]?.genero ?? generoFinal,
-      audio_url: dbData[0]?.url_audio ?? urlAudio,
-      duration: dbData[0]?.duracao_segundos ?? metadados.duration,
-      cover_url: dbData[0]?.capa_url ?? urlCapa
-    };
 
     return res.status(201).json({
-      mensagem: 'Música cadastrada com sucesso!',
-      musica: musicaRetornada
+      mensagem: `${musicas.length} música(s) cadastrada(s) com sucesso!`,
+      musica: musicas[0],
+      musicas
     });
-
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
